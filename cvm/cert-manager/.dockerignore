@@ -1,0 +1,11 @@
+venv
+.venv
+.ruff_cache
+__pycache__
+*egg-info
+dist
+build
+.pytest_cache
+
+# don't copy nginx dev config by mistake
+nginx_conf/https-dev.conf

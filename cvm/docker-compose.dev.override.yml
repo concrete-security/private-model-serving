@@ -1,0 +1,159 @@
+services:
+  vllm:
+    image: python:3.11-slim
+    container_name: vllm-mock
+    runtime: runc
+    configs:
+      - source: mock_server
+        target: /app/mock_server.py
+        mode: 0444
+      - source: mock_entrypoint
+        target: /app/entrypoint.sh
+        mode: 0744
+    command:
+    entrypoint: /app/entrypoint.sh
+    healthcheck:
+      start_period: 10s
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  model-service:
+    image: model-service-dev
+    build:
+      context: ./model-service
+      dockerfile: Dockerfile
+
+  nginx-cert-manager:
+    image: cert-manager-dev
+    build:
+      context: ./cert-manager
+      dockerfile: Dockerfile
+    environment:
+      DOMAIN: localhost
+      DEV_MODE: "true"
+      EMAIL: test@test.com
+      AUTH_ENABLED: "false"
+      EKM_SHARED_SECRET: dev-ekm-secret-change-in-production-min-32-chars
+      EXTRA_LOCATIONS: |
+        location = /push-model {
+            client_max_body_size 0;
+            proxy_pass http://model-service:8001;
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+        }
+
+        location = /model-hash {
+            proxy_pass http://model-service:8001;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+        }
+
+        location /v1/ {
+            proxy_pass http://vllm:8000;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+            proxy_read_timeout 600s;
+            proxy_send_timeout 600s;
+        }
+    volumes:
+      - ./cert-manager/nginx_conf/https-dev.conf:/app/nginx_conf/https.conf:ro
+    configs:
+      - source: acme_test_token_1
+        target: /acme-challenge/.well-known/acme-challenge/test-challenge-token-dev
+        mode: 0644
+      - source: acme_test_token_2
+        target: /acme-challenge/.well-known/acme-challenge/VGVzdENoYWxsZW5nZURldg
+        mode: 0644
+      - source: acme_test_token_3
+        target: /acme-challenge/.well-known/acme-challenge/dev-test-with-hyphens
+        mode: 0644
+
+  attestation-service:
+    image: attestation-service-dev
+    build:
+      context: ./attestation-service
+      dockerfile: Dockerfile
+    volumes:
+      - ./attestation-service/attestation_service_with_debug.py:/app/attestation_service_with_debug.py:ro
+    environment:
+      WORKERS: "1"
+      SERVICE_SCRIPT: attestation_service_with_debug.py
+      EKM_SHARED_SECRET: dev-ekm-secret-change-in-production-min-32-chars
+
+
+configs:
+  mock_entrypoint:
+    content: |
+      #!/bin/sh
+      pip install fastapi[standard] uvicorn pydantic
+      fastapi run --host 0.0.0.0 --port 8000 /app/mock_server.py
+  mock_server:
+    content: |
+      from fastapi import FastAPI
+      from pydantic import BaseModel
+      from typing import List, Optional
+      import time
+
+      app = FastAPI()
+
+      class ChatMessage(BaseModel):
+          role: str
+          content: str
+
+      class ChatCompletionRequest(BaseModel):
+          model: str
+          messages: List[ChatMessage]
+          temperature: Optional[float] = 0.7
+          max_tokens: Optional[int] = None
+          stream: Optional[bool] = False
+
+      @app.get('/health')
+      async def health():
+          return {'status': 'ok'}
+
+      @app.get('/v1/models')
+      async def list_models():
+          return {
+              'object': 'list',
+              'data': [{
+                  'id': 'openai/gpt-oss-120b',
+                  'object': 'model',
+                  'created': int(time.time()),
+                  'owned_by': 'mock',
+              }],
+          }
+
+      @app.post('/v1/chat/completions')
+      async def chat_completions(request: ChatCompletionRequest):
+          return {
+              'id': f'chatcmpl-mock-{int(time.time())}',
+              'object': 'chat.completion',
+              'created': int(time.time()),
+              'model': request.model,
+              'choices': [{
+                  'index': 0,
+                  'message': {
+                      'role': 'assistant',
+                      'content': f'Mock response to: {request.messages[-1].content}',
+                  },
+                  'finish_reason': 'stop',
+              }],
+              'usage': {'prompt_tokens': 50, 'completion_tokens': 20, 'total_tokens': 70},
+          }
+
+  acme_test_token_1:
+    content: "test-challenge-response-content-dev-mode-12345\n"
+  acme_test_token_2:
+    content: "base64url-encoded-token-response-content\n"
+  acme_test_token_3:
+    content: "hyphenated-token-response-for-testing\n"

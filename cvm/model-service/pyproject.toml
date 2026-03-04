@@ -1,0 +1,31 @@
+[project]
+name = "model-service"
+version = "0.1.0"
+requires-python = ">=3.11,<3.14"
+
+dependencies = [
+    "fastapi[standard]~=0.119",
+]
+
+[dependency-groups]
+test = [
+    "pytest",
+    "httpx",
+]
+
+dev = [
+    "ruff",
+]
+
+[tool.ruff]
+line-length = 100
+indent-width = 4
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
