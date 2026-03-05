@@ -1,0 +1,29 @@
+[project]
+name = "private-model-serving"
+version = "0.1.0"
+description = "Confidential model serving with Shade framework"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.ruff]
+line-length = 100
+indent-width = 4
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["app/tests"]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "pytest>=9.0.2",
+    "requests>=2.32",
+    "urllib3>=2.0",
+    "pytest-cov>=7.0.0",
+    "cryptography>=46.0.5",
+]

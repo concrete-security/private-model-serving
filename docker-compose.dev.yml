@@ -1,0 +1,8 @@
+# Dev override: expose ports to localhost for local testing.
+services:
+  vllm:
+    ports:
+      - "8000:8000"
+  model-service:
+    ports:
+      - "8001:8001"
