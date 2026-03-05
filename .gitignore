@@ -37,3 +37,6 @@ htmlcov/
 
 # Docker
 *.log
+
+# Model weights
+client/models/

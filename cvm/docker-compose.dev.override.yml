@@ -1,3 +1,5 @@
+# Dev override: mock vLLM, self-signed cert (no Let's Encrypt),
+# localhost domain, no dstack socket, build model-service locally.
 services:
   vllm:
     image: python:3.11-slim
@@ -20,76 +22,30 @@ services:
       retries: 3
 
   model-service:
-    image: model-service-dev
     build:
       context: ./model-service
       dockerfile: Dockerfile
 
   nginx-cert-manager:
-    image: cert-manager-dev
     build:
       context: ./cert-manager
       dockerfile: Dockerfile
     environment:
       DOMAIN: localhost
       DEV_MODE: "true"
-      EMAIL: test@test.com
-      AUTH_ENABLED: "false"
       EKM_SHARED_SECRET: dev-ekm-secret-change-in-production-min-32-chars
-      EXTRA_LOCATIONS: |
-        location = /push-model {
-            client_max_body_size 0;
-            proxy_pass http://model-service:8001;
-            proxy_read_timeout 3600s;
-            proxy_send_timeout 3600s;
-            proxy_set_header Host $$host;
-            proxy_set_header X-Real-IP $$remote_addr;
-            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $$scheme;
-        }
-
-        location = /model-hash {
-            proxy_pass http://model-service:8001;
-            proxy_set_header Host $$host;
-            proxy_set_header X-Real-IP $$remote_addr;
-            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $$scheme;
-        }
-
-        location /v1/ {
-            proxy_pass http://vllm:8000;
-            proxy_set_header Host $$host;
-            proxy_set_header X-Real-IP $$remote_addr;
-            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $$scheme;
-            proxy_read_timeout 600s;
-            proxy_send_timeout 600s;
-        }
     volumes:
-      - ./cert-manager/nginx_conf/https-dev.conf:/app/nginx_conf/https.conf:ro
-    configs:
-      - source: acme_test_token_1
-        target: /acme-challenge/.well-known/acme-challenge/test-challenge-token-dev
-        mode: 0644
-      - source: acme_test_token_2
-        target: /acme-challenge/.well-known/acme-challenge/VGVzdENoYWxsZW5nZURldg
-        mode: 0644
-      - source: acme_test_token_3
-        target: /acme-challenge/.well-known/acme-challenge/dev-test-with-hyphens
-        mode: 0644
+      - /dev/null:/var/run/dstack.sock:ro
 
   attestation-service:
-    image: attestation-service-dev
     build:
       context: ./attestation-service
       dockerfile: Dockerfile
-    volumes:
-      - ./attestation-service/attestation_service_with_debug.py:/app/attestation_service_with_debug.py:ro
     environment:
       WORKERS: "1"
-      SERVICE_SCRIPT: attestation_service_with_debug.py
       EKM_SHARED_SECRET: dev-ekm-secret-change-in-production-min-32-chars
-
+    volumes:
+      - /dev/null:/var/run/dstack.sock:ro
 
 configs:
   mock_entrypoint:
@@ -150,10 +106,3 @@ configs:
               }],
               'usage': {'prompt_tokens': 50, 'completion_tokens': 20, 'total_tokens': 70},
           }
-
-  acme_test_token_1:
-    content: "test-challenge-response-content-dev-mode-12345\n"
-  acme_test_token_2:
-    content: "base64url-encoded-token-response-content\n"
-  acme_test_token_3:
-    content: "hyphenated-token-response-for-testing\n"
