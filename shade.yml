@@ -1,0 +1,38 @@
+app:
+  name: model-service
+
+services:
+  model-service:
+    networks: [proxy]
+  vllm:
+    networks: [proxy]
+
+cvm:
+  domain: model-serving.concrete-security.com
+
+  routes:
+    - path: /push-model
+      service: model-service
+      port: 8001
+
+    - path: /model-hash
+      service: model-service
+      port: 8001
+
+    - path: /v1/
+      service: vllm
+      port: 8000
+
+  nginx:
+    max_body_size: "10G"
+
+  cors:
+    origins:
+      - "^https://.*$"
+
+  tls:
+    letsencrypt_staging: false
+
+plugins:
+  auth:
+    enabled: false
