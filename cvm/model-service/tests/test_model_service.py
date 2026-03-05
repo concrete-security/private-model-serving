@@ -1,37 +1,40 @@
 """Tests for the Model Service."""
 
 import io
+import shutil
 import tarfile
 
 import pytest
 from fastapi.testclient import TestClient
 
 
-@pytest.fixture(autouse=True)
-def reset_state():
-    import model_service
+@pytest.fixture
+def model_dir(tmp_path):
+    import app
 
-    model_service._model_pushed = False
+    app.MODEL_DIR = tmp_path
+    return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def reset_state(model_dir):
+    import app
+
+    if model_dir.exists():
+        shutil.rmtree(model_dir)
+    model_dir.mkdir(parents=True)
+    app._cached_hash = None
     yield
 
 
 @pytest.fixture
 def client():
-    from model_service import app
+    from app import app
 
     return TestClient(app)
 
 
-@pytest.fixture
-def model_dir(tmp_path):
-    import model_service
-
-    model_service.MODEL_DIR = tmp_path
-    return tmp_path
-
-
 def make_tar_gz(files: dict[str, bytes]) -> io.BytesIO:
-    """Create an in-memory tar.gz from {name: content}."""
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         for name, data in files.items():
@@ -56,10 +59,8 @@ class TestHealth:
         assert data["status"] == "healthy"
         assert data["model_pushed"] is False
 
-    def test_with_model(self, client):
-        import model_service
-
-        model_service._model_pushed = True
+    def test_with_model(self, client, model_dir, sample_tar):
+        client.post("/push-model", files={"file": ("m.tar.gz", sample_tar)})
         assert client.get("/health").json()["model_pushed"] is True
 
 
@@ -74,24 +75,24 @@ class TestPushModel:
     def test_push_rejected_after_first(self, client, model_dir, sample_tar):
         client.post("/push-model", files={"file": ("model.tar.gz", sample_tar)})
         resp = client.post("/push-model", files={"file": ("model.tar.gz", sample_tar)})
-        assert resp.status_code == 403
+        assert resp.status_code == 410
 
     def test_push_invalid_archive(self, client, model_dir):
         resp = client.post("/push-model", files={"file": ("bad.tar.gz", io.BytesIO(b"not a tar"))})
         assert resp.status_code == 400
-        import model_service
-        assert model_service._model_pushed is False  # reset on failure
+        from utils import model_pushed
+        assert not model_pushed(model_dir)
 
     def test_push_with_expected_hash(self, client, model_dir):
-        # Push once to get the hash
         tar1 = make_tar_gz({"a.txt": b"hello"})
         client.post("/push-model", files={"file": ("m.tar.gz", tar1)})
-        hash_resp = client.get("/model-hash")
-        correct_hash = hash_resp.json()["hash"]
+        correct_hash = client.get("/model-hash").json()["hash"]
 
-        # Reset and push again with expected_hash
-        import model_service
-        model_service._model_pushed = False
+        # Clean and push again with expected_hash
+        shutil.rmtree(model_dir)
+        model_dir.mkdir()
+        import app
+        app._cached_hash = None
 
         tar2 = make_tar_gz({"a.txt": b"hello"})
         resp = client.post(
@@ -136,4 +137,4 @@ class TestModelHash:
         (model_dir / ".DS_Store").write_bytes(b"junk")
         (model_dir / "x.tmp").write_bytes(b"junk")
         resp = client.get("/model-hash")
-        assert len(resp.json()["files"]) == 2  # ignored
+        assert len(resp.json()["files"]) == 2

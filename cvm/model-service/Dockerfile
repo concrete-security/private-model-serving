@@ -8,12 +8,9 @@ COPY pyproject.toml /app/
 COPY uv.lock /app/
 RUN uv sync --locked --no-cache
 
-COPY model_service.py /app/
+COPY utils.py /app/
+COPY app.py /app/
 
 EXPOSE 8001
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD uv run python -c \
-    'import requests; res = requests.get("http://localhost:8001/health"); exit(res.status_code != 200)'
-
-CMD ["uv", "run", "fastapi", "run", "model_service.py", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["uv", "run", "fastapi", "run", "app.py", "--host", "0.0.0.0", "--port", "8001"]

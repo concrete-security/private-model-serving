@@ -15,7 +15,7 @@ env/
 
 # Environment variables
 .env
-.env.*
+!.env.example
 
 # IDE
 .vscode/
@@ -37,3 +37,10 @@ htmlcov/
 
 # Docker
 *.log
+
+# Model weights
+model-owner/models/
+
+# Secrets & generated files
+push-token.txt
+model-hash.txt
