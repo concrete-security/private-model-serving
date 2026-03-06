@@ -67,22 +67,19 @@ class CVMTester:
         return session
 
     def _print_test_header(self, test_name: str):
-        print("")
-        print("-" * (len(test_name) + 4))
-        print(f"  {test_name}")
-        print("-" * (len(test_name) + 4))
+        pass
 
     def _print_success(self, message: str):
-        print(f"  PASS: {message}")
+        pass
 
     def _print_error(self, message: str):
-        print(f"  FAIL: {message}")
+        pass
 
     def _print_warning(self, message: str):
-        print(f"  WARN: {message}")
+        pass
 
     def _print_info(self, message: str):
-        print(f"  INFO: {message}")
+        pass
 
     # ── Wait helpers ────────────────────────────────────────────────
 
@@ -480,6 +477,7 @@ class CVMTester:
     def run_tests(self, test_names: list[str]) -> bool:
         """Run specified tests and return overall pass/fail."""
         results = {}
+        errors = {}
         test_map = {
             "health": self.test_health,
             "push-model": self.test_push_model,
@@ -495,22 +493,45 @@ class CVMTester:
         }
 
         for name in test_names:
-            if name in test_map:
+            if name not in test_map:
+                continue
+            try:
                 results[name] = test_map[name]()
+            except Exception as e:
+                results[name] = False
+                errors[name] = str(e)
 
-        # Summary
-        print("\n" + "=" * 50)
-        print("TEST RESULTS")
-        print("=" * 50)
-        passed = sum(1 for v in results.values() if v)
-        failed = sum(1 for v in results.values() if not v)
-        for name, result in results.items():
-            status = "PASS" if result else "FAIL"
-            print(f"  {status}: {name}")
-        print(f"\nTotal: {passed} passed, {failed} failed")
-        print("=" * 50)
+        for name, passed in results.items():
+            url = self._test_url(name)
+            if passed:
+                print(f"PASS  {name:30s} {url}")
+            else:
+                err = errors.get(name, "")
+                print(f"FAIL  {name:30s} {url}")
+                if err:
+                    print(f"      {err}")
 
-        return failed == 0
+        return all(results.values())
+
+    def _test_url(self, test_name: str) -> str:
+        """Return the endpoint URL exercised by a test."""
+        url_map = {
+            "health": "/health",
+            "push-model": "/push-model",
+            "push-model-repeat": "/push-model",
+            "model-hash": "/model-hash",
+            "attestation": "/tdx_quote",
+            "vllm": "/v1/chat/completions",
+            "redirect": f"{self.http_url}/health",
+            "acme": f"{self.http_url}/.well-known/acme-challenge/",
+            "certificate": f"{self.base_url} (TLS)",
+            "client-verification": "/tdx_quote + /model-hash + /v1/",
+            "ekm-headers": "/debug/ekm",
+        }
+        route = url_map.get(test_name, "")
+        if route.startswith("/"):
+            return f"{self.base_url}{route}"
+        return route
 
 
 def main():

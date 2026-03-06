@@ -8,7 +8,7 @@ from pathlib import Path
 
 IGNORE_PATTERNS = {".DS_Store", "Thumbs.db", ".gitkeep"}
 IGNORE_SUFFIXES = {".tmp", ".temp", ".partial", ".swp"}
-IGNORE_DIRS = {"__pycache__", ".git"}
+IGNORE_DIRS = {"__pycache__", ".git", ".cache"}
 
 
 def _is_ignored(path: Path) -> bool:

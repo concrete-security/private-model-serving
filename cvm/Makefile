@@ -3,7 +3,7 @@ SHELL := /bin/bash
 # Docker Compose files
 COMPOSE_FILE = docker-compose.yml
 DEV_COMPOSE_FILE = docker-compose.dev.override.yml
-STAGING_COMPOSE_FILE = docker-compose.staging.macOS.override.yml
+LOCAL_MACOS_COMPOSE_FILE = docker-compose.dev-local-macos.override.yml
 
 # Service endpoints - all traffic goes through nginx proxy
 NGINX_URL = https://localhost
@@ -16,7 +16,7 @@ DEV_FLAG = $(if $(filter true,$(DEV)),--dev,)
 # Python runner command
 PYTHON_RUNNER ?= uv run
 
-.PHONY: help docker-login dev-full dev-up dev-down staging-up staging-down test-all test-health test-push-model test-model-hash test-attestation test-vllm test-redirect test-acme test-certificate test-ekm-headers test-client-verification wait-services
+.PHONY: help docker-login dev-full dev-up dev-down dev-local-macos-up dev-local-macos-down test-all test-health test-push-model test-model-hash test-attestation test-vllm test-redirect test-acme test-certificate test-ekm-headers test-client-verification wait-services
 
 docker-login:
 	@gh auth token | docker login ghcr.io -u $(shell gh api user -q .login) --password-stdin
@@ -69,11 +69,11 @@ dev-down:
 	@echo "Stopping development services..."
 	docker compose -f $(COMPOSE_FILE) -f $(DEV_COMPOSE_FILE) down
 
-staging-up: docker-login
-	docker compose -f $(COMPOSE_FILE) -f $(STAGING_COMPOSE_FILE) up -d --build
+dev-local-macos-up: docker-login
+	docker compose -f $(COMPOSE_FILE) -f $(LOCAL_MACOS_COMPOSE_FILE) up -d --build
 
-staging-down:
-	docker compose -f $(COMPOSE_FILE) -f $(STAGING_COMPOSE_FILE) down
+dev-local-macos-down:
+	docker compose -f $(COMPOSE_FILE) -f $(LOCAL_MACOS_COMPOSE_FILE) down
 
 wait-services:
 	$(PYTHON_RUNNER) test_cvm.py $(DEV_FLAG) --wait --base-url $(NGINX_URL)

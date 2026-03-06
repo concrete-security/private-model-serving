@@ -22,7 +22,7 @@ _lock = threading.Lock()
 
 IGNORE_PATTERNS = {".DS_Store", "Thumbs.db", ".gitkeep"}
 IGNORE_SUFFIXES = {".tmp", ".temp", ".partial", ".swp"}
-IGNORE_DIRS = {"__pycache__", ".git"}
+IGNORE_DIRS = {"__pycache__", ".git", ".cache"}
 
 
 def _is_ignored(path: Path) -> bool:
@@ -34,7 +34,20 @@ def _is_ignored(path: Path) -> bool:
 
 
 def compute_model_hash() -> tuple[str, list[str]]:
-    """SHA-256 over sorted (path + content) of all files in MODEL_DIR."""
+    """SHA-256 over sorted (path + content) of all files in MODEL_DIR.
+
+    Hash strategies (current: post-extraction file-based):
+    1. Post-extraction file hash (current) — hash sorted files after extracting the
+       archive. Deterministic regardless of archive format. Slower for large models
+       (~240 GB) since it reads all files after extraction. Verifiable by any third
+       party with access to the same model files (e.g. from HuggingFace).
+    2. Streaming archive hash — hash the raw bytes of the tar during upload, before
+       extraction. Faster (single pass, no re-read), but the hash is tied to the
+       exact archive: two tars of the same files may differ (timestamps, ordering,
+       metadata). Only the original uploader can reproduce the hash.
+    3. Both — stream-hash the archive for transport integrity, then file-hash after
+       extraction for third-party verification. Most secure but slowest.
+    """
     if not MODEL_DIR.exists():
         raise FileNotFoundError(f"{MODEL_DIR} does not exist")
 
@@ -67,10 +80,10 @@ async def health():
 
 @app.post("/push-model")
 async def push_model(file: UploadFile, expected_hash: str | None = None):
-    """Receive a tar.gz archive of model weights. One-time only.
+    """Receive a tar archive of model weights. One-time only.
 
     Args:
-        file: tar.gz archive of model weights.
+        file: tar archive of model weights (supports .tar, .tar.gz, .tar.bz2).
         expected_hash: Optional "sha256:<hex>" to verify after extraction.
     """
     global _model_pushed
@@ -83,7 +96,7 @@ async def push_model(file: UploadFile, expected_hash: str | None = None):
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
     try:
-        with tarfile.open(fileobj=file.file, mode="r:gz") as tar:
+        with tarfile.open(fileobj=file.file, mode="r:*") as tar:
             tar.extractall(path=MODEL_DIR, filter="data")
     except Exception as e:
         logger.error(f"Failed to extract model archive: {e}")
