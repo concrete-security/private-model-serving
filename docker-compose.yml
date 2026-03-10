@@ -27,14 +27,10 @@ services:
           --model /models/current \
           --tensor-parallel-size 1 \
           --gpu-memory-utilization 0.85 \
-          --max-model-len 16384 \
+          --max-model-len 4096 \
           --max-num-seqs 8 \
-          --reasoning-parser openai_gptoss \
-          --enable-auto-tool-choice \
-          --tool-call-parser openai \
-          --async-scheduling \
           --enforce-eager \
-          --served-model-name openai/gpt-oss-120b
+          --served-model-name Qwen/Qwen2.5-0.5B-Instruct
     ports:
       - "8000:8000"
     restart: unless-stopped

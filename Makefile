@@ -12,7 +12,7 @@ PYTHON_RUNNER ?= uv run
 # ─── Application config ─────────────────────────────────────
 MODEL_SERVICE  ?= http://localhost:8001
 VLLM_ENDPOINT  ?= http://localhost:8000
-MODEL_NAME     ?= openai/gpt-oss-120b
+MODEL_NAME     ?= Qwen/Qwen2.5-0.5B-Instruct
 CURL            = curl -s
 
 _PUSH_URL     = $(MODEL_SERVICE)/push-model
@@ -101,7 +101,7 @@ app-dev-wait:
 app-dev-test:
 	@echo ""
 	@echo "═══ 🔥 Push model 🔥 ═══"
-	cd model-owner && make Push
+	cd model-owner && make push
 	@echo ""
 	@clear
 	@echo "🔥 App dev tests (local HTTP, no TLS) 🔥"
@@ -139,7 +139,7 @@ dev-clean:
 
 dev-wait:
 	@echo "Waiting for vLLM to be ready..."
-	@until curl -skf https://localhost/health >/dev/null 2>&1; do \
+	@until curl -skf https://localhost/v1/models >/dev/null 2>&1; do \
 		printf "."; sleep 10; \
 	done
 	@echo ""
@@ -148,6 +148,12 @@ dev-wait:
 dev-test:
 	@clear
 	@echo "🔒 Dev tests (HTTPS, self-signed TLS) 🔒"
+	@echo ""
+	@echo "Waiting for nginx to be ready..."
+	@until curl -skf https://localhost/health >/dev/null 2>&1; do \
+		printf "."; sleep 2; \
+	done
+	@echo " ready!"
 	@echo ""
 	@echo "═══ 🔒 Push model 🔒 ═══"
 	cd model-owner && make push ENDPOINT=https://localhost CURL="curl -sk"

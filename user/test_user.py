@@ -9,7 +9,7 @@ import requests
 PROXY_ENDPOINT = os.environ.get("PROXY_ENDPOINT", "http://localhost")
 VLLM_ENDPOINT = os.environ.get("VLLM_ENDPOINT", PROXY_ENDPOINT)
 VERIFY_TLS = os.environ.get("VERIFY_TLS", "1") != "0"
-MODEL    = "openai/gpt-oss-120b"
+MODEL    = "Qwen/Qwen2.5-0.5B-Instruct"
 EXPECTED_HASH_FILE = "model-hash.txt"
 
 

@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 
 # FULL_MODEL_NAME ?= Qwen/Qwen2.5-1.5B-Instruct
-FULL_MODEL_NAME ?= openai/gpt-oss-120b
+FULL_MODEL_NAME ?= Qwen/Qwen2.5-0.5B-Instruct
 MODEL_NAME := $(notdir $(FULL_MODEL_NAME))
 
 MODEL_DIR := models/$(MODEL_NAME)
@@ -16,12 +16,12 @@ CURL = curl -sk
 
 download:
 	@clear
-	huggingface-cli download $(FULL_MODEL_NAME) \
+	hf download $(FULL_MODEL_NAME) \
 		--local-dir $(MODEL_DIR) \
 		--exclude "*.bin" "*.pt" "*.ckpt" "consolidated*" "original/*"
 	@echo ""
 	@du -sh $(MODEL_DIR)
-	# 61G  models/gpt-oss-120b
+	# ~1G  models/Qwen2.5-0.5B-Instruct
 
 
 archive:

@@ -6,7 +6,7 @@ import requests
 
 MODEL_SERVICE = "http://localhost:8001"
 VLLM = "http://localhost:8000"
-MODEL = "openai/gpt-oss-120b"
+MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 
 
 def test_health():
