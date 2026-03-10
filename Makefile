@@ -1,43 +1,189 @@
 SHELL := /bin/bash
 
-# ─── Configuration ────────────────────────────────────────────
+# ─── Shade framework config ─────────────────────────────────
+COMPOSE_FILE = docker-compose.yml
+DEV_COMPOSE_FILE = docker-compose.dev.override.yml
+NGINX_URL = https://localhost
+NGINX_HTTP_URL = http://localhost
+DEV ?= true
+DEV_FLAG = $(if $(filter true,$(DEV)),--dev,)
+PYTHON_RUNNER ?= uv run
+
+# ─── Application config ─────────────────────────────────────
 MODEL_SERVICE  ?= http://localhost:8001
 VLLM_ENDPOINT  ?= http://localhost:8000
 MODEL_NAME     ?= openai/gpt-oss-120b
 CURL            = curl -s
 
-# Dev mode only — direct HTTP to each service.
-# TODO: prod mode (through Shade nginx) not yet implemented.
 _PUSH_URL     = $(MODEL_SERVICE)/push-model
 _HASH_URL     = $(MODEL_SERVICE)/model-hash
 _VLLM_URL     = $(VLLM_ENDPOINT)
 
-# Derived paths
 MODEL_DIR          = model-owner/models/$(notdir $(MODEL_NAME))
 MODEL_ARCHIVE      = $(MODEL_DIR).tar
 PUSH_TOKEN_FILE    = model-owner/push-token.txt
 MODEL_HASH_FILE    = model-owner/model-hash.txt
-CVM_ENV            = cvm/.env
+CVM_ENV            = .env
 
-.PHONY: cvm-up cvm-down cvm-wait \
+.PHONY: help \
+        app-dev-up app-dev-down app-dev-logs app-dev-clean \
+        dev-up dev-down dev-logs dev-clean \
+        docker-up docker-down docker-logs prod-clean \
+        shade-build shade-validate wait-services \
+        test-all test-health test-attestation test-app test-redirect \
+        test-acme test-certificate test-cors test-ekm-headers unit-tests \
         verify-token step-1-hash-local step-2-push \
         step-3-push-repeat step-4-user-verify
 
-# ─── CVM management ──────────────────────────────────────────
-cvm-up:
+# ─── Help ───────────────────────────────────────────────────
+help:
+	@echo "Private Model Serving (Shade Framework)"
+	@echo "========================================"
 	@echo ""
-	@echo "══════════════════════════════════════════════════════"
-	@echo "  CLOUD PROVIDER — Starting application services"
-	@echo "══════════════════════════════════════════════════════"
-	$(MAKE) -C cvm dev-up
+	@echo "App dev (no TLS, no attestation):"
+	@echo "  app-dev-up        Start vllm + model-service"
+	@echo "  app-dev-down      Stop"
+	@echo "  app-dev-logs      Follow logs"
+	@echo "  app-dev-clean     Stop + remove volumes"
+	@echo ""
+	@echo "Dev (app + nginx + attestation, self-signed TLS):"
+	@echo "  dev-up            Start full dev stack"
+	@echo "  dev-down          Stop"
+	@echo "  dev-logs          Follow logs"
+	@echo "  dev-clean         Stop + remove volumes"
+	@echo ""
+	@echo "Prod (shade build, real TLS):"
+	@echo "  docker-up         Build + start"
+	@echo "  docker-down       Stop"
+	@echo "  docker-logs       Follow logs"
+	@echo "  prod-clean        Stop + remove volumes"
+	@echo ""
+	@echo "Scenario:"
+	@echo "  step-1-hash-local   Model Owner computes hash locally"
+	@echo "  step-2-push         Model Owner pushes weights to CVM"
+	@echo "  step-3-push-repeat  Verify double push is blocked"
+	@echo "  step-4-user-verify  User verifies hash + runs inference"
+	@echo ""
+	@echo "Tests:"
+	@echo "  test-all          Run all integration tests"
+	@echo "  unit-tests        Run shade unit tests"
 
-cvm-down:
-	$(MAKE) -C cvm dev-down
+# ─── App dev (local HTTP, no TLS, no nginx, no attestation) ──
+app-dev-up:
+	@clear
+	@echo "🔥 Starting app services (local HTTP, no TLS)..."
+	@echo "  model-service → http://localhost:8001"
+	@echo "  vllm          → http://localhost:8000"
+	@echo ""
+	docker compose -f $(COMPOSE_FILE) up -d --build
 
-cvm-wait:
-	$(MAKE) -C cvm wait-services
+app-dev-down:
+	@clear
+	docker compose -f $(COMPOSE_FILE) down
 
-# ─── Verify token: push-token.txt == cvm/.env ────────────────
+app-dev-logs:
+	@clear
+	docker compose -f $(COMPOSE_FILE) logs -f
+
+app-dev-clean:
+	@clear
+	docker compose -f $(COMPOSE_FILE) down -v --remove-orphans
+
+app-dev-wait:
+	@echo "Waiting for vLLM to be ready (loading 120B model, this takes a while)..."
+	@until curl -sf http://localhost:8000/health >/dev/null 2>&1; do \
+		printf "."; sleep 10; \
+	done
+	@echo ""
+	@echo "vLLM is ready!"
+
+
+app-dev-test:
+# @echo ""
+# @echo "═══ 🔥 Push model 🔥 ═══"
+# cd model-owner && make push
+# @echo ""
+	@clear
+	@echo "🔥 App dev tests (local HTTP, no TLS) 🔥"
+
+	@echo "═══ 🔥 Waiting for vLLM 🔥 ═══"
+	$(MAKE) app-dev-wait
+	@echo ""
+	@echo "═══ 🔥 Model owner tests 🔥 ═══"
+	cd model-owner && make test
+	@echo ""
+	@echo "═══ 🔥 User tests 🔥 ═══"
+	cd user && uv run pytest test_user.py -v
+
+# ─── Dev (app + nginx + attestation, self-signed TLS) ────────
+dev-up:
+	@echo "Starting full dev stack..."
+	docker compose -f $(COMPOSE_FILE) -f $(DEV_COMPOSE_FILE) up -d --build
+
+dev-down:
+	docker compose -f $(COMPOSE_FILE) -f $(DEV_COMPOSE_FILE) down
+
+dev-logs:
+	docker compose -f $(COMPOSE_FILE) -f $(DEV_COMPOSE_FILE) logs -f
+
+dev-clean:
+	docker compose -f $(COMPOSE_FILE) -f $(DEV_COMPOSE_FILE) down -v --remove-orphans
+
+# ─── Prod (shade build, real TLS) ────────────────────────────
+docker-up: shade-build
+	docker compose -f docker-compose.shade.yml up -d --build
+
+docker-down:
+	docker compose -f docker-compose.shade.yml down -v
+
+docker-logs:
+	docker compose -f docker-compose.shade.yml logs -f
+
+prod-clean:
+	docker compose -f docker-compose.shade.yml down -v --remove-orphans
+
+# ─── Shade infrastructure ───────────────────────────────────
+shade-build:
+	$(PYTHON_RUNNER) shade build
+
+shade-validate:
+	$(PYTHON_RUNNER) shade validate
+
+wait-services:
+	$(PYTHON_RUNNER) test_cvm.py $(DEV_FLAG) --wait --base-url $(NGINX_URL)
+
+# ─── Shade integration tests ────────────────────────────────
+test-all:
+	$(PYTHON_RUNNER) test_cvm.py $(DEV_FLAG) --all --base-url $(NGINX_URL) --http-url $(NGINX_HTTP_URL)
+
+test-health:
+	$(PYTHON_RUNNER) test_cvm.py $(DEV_FLAG) --health --base-url $(NGINX_URL)
+
+test-attestation:
+	$(PYTHON_RUNNER) test_cvm.py $(DEV_FLAG) --attestation --base-url $(NGINX_URL)
+
+test-app:
+	$(PYTHON_RUNNER) test_cvm.py $(DEV_FLAG) --app --base-url $(NGINX_URL)
+
+test-redirect:
+	$(PYTHON_RUNNER) test_cvm.py $(DEV_FLAG) --redirect --base-url $(NGINX_URL) --http-url $(NGINX_HTTP_URL)
+
+test-acme:
+	$(PYTHON_RUNNER) test_cvm.py $(DEV_FLAG) --acme --base-url $(NGINX_URL) --http-url $(NGINX_HTTP_URL)
+
+test-certificate:
+	$(PYTHON_RUNNER) test_cvm.py $(DEV_FLAG) --certificate --base-url $(NGINX_URL)
+
+test-cors:
+	$(PYTHON_RUNNER) test_cvm.py $(DEV_FLAG) --cors --base-url $(NGINX_URL)
+
+test-ekm-headers:
+	$(PYTHON_RUNNER) test_cvm.py $(DEV_FLAG) --ekm-headers --base-url $(NGINX_URL)
+
+unit-tests:
+	$(PYTHON_RUNNER) pytest --cov=shade --cov-report=term-missing --cov-fail-under=98 tests/ -v
+
+# ─── Verify token: push-token.txt == .env ────────────────────
 verify-token:
 	@diff -q <(cat $(PUSH_TOKEN_FILE)) <(grep '^PUSH_TOKEN=' $(CVM_ENV) | cut -d= -f2) \
 		&& echo "verify-token: OK" \
@@ -113,4 +259,3 @@ step-4-user-verify:
 	@echo "User received expected hash from model owner: $$(cat $(MODEL_HASH_FILE))"
 	@echo ""
 	cd user && uv run pytest test_user.py -v
-

@@ -12,7 +12,7 @@ PUSH_TOKEN_FILE ?= push-token.txt
 MODEL_HASH_FILE ?= model-hash.txt
 CURL = curl -sk
 
-.PHONY:  download archive hash-local hash-remote push health clean
+.PHONY:  download archive hash-local hash-remote push health test clean
 
 download:
 	@clear
@@ -30,12 +30,10 @@ archive:
 	du -sh $(MODEL_ARCHIVE)
 
 hash-local:
-	@clear
 	@python3 compute_hash.py $(MODEL_DIR) | tee /dev/stderr | grep '^sha256:' > $(MODEL_HASH_FILE)
 	@echo "Hash saved to $(MODEL_HASH_FILE)"
 
 push:
-	@clear
 	@test -f $(PUSH_TOKEN_FILE) || { echo "Error: $(PUSH_TOKEN_FILE) not found."; exit 1; }
 	@test -f $(MODEL_HASH_FILE) || { echo "Error: $(MODEL_HASH_FILE) not found. Run 'make hash-local' first."; exit 1; }
 
@@ -49,12 +47,14 @@ push:
 		-w "\nHTTP %{http_code}\n" 2>&1
 
 hash-remote:
-	@clear
 	@echo "GET $(ENDPOINT)/model-hash"
 	@$(CURL) $(ENDPOINT)/model-hash | python3 -m json.tool
 
 health:
 	@$(CURL) $(ENDPOINT)/health | python3 -m json.tool
+
+test:
+	uv run pytest test_model_owner.py -v
 
 clean:
 	rm -rf $(MODEL_DIR) $(MODEL_ARCHIVE) $(MODEL_HASH_FILE)

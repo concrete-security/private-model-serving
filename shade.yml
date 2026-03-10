@@ -1,0 +1,57 @@
+# Shade configuration for private-model-serving.
+#
+# This file tells `shade build` how to wrap vLLM + model-service with
+# TLS termination (nginx), TDX attestation, and EKM channel binding.
+#
+# Usage:
+#   shade build                           # generates docker-compose.shade.yml
+#   docker compose -f docker-compose.shade.yml up -d
+#
+# What Shade adds automatically:
+#   - nginx-cert-manager (ports 80/443, TLS 1.3, Let's Encrypt)
+#   - attestation-service (/tdx_quote, /health, /debug/ekm)
+#   - proxy network (nginx <-> user services)
+#   - attestation network (internal)
+#
+# Reserved paths (handled by Shade, do NOT declare as routes):
+#   /health, /tdx_quote, /_auth, /debug/ekm, /.well-known/acme-challenge/
+
+app:
+  name: model-service
+
+services:
+  model-service:
+    networks: [proxy]
+  vllm:
+    networks: [proxy]
+
+cvm:
+  domain: model-serving.example.com
+
+  routes:
+    # Model push — authenticated by model-service itself (PUSH_TOKEN).
+    # NOT using auth_required here to avoid double auth.
+    - path: /push-model
+      service: model-service
+      port: 8001
+
+    # Model hash — public, anyone can verify.
+    - path: /model-hash
+      service: model-service
+      port: 8001
+
+    # vLLM inference — OpenAI-compatible API.
+    - path: /v1/
+      service: vllm
+      port: 8000
+
+  cors:
+    origins:
+      - "^https://.*$"
+
+  tls:
+    letsencrypt_staging: false
+
+plugins:
+  auth:
+    enabled: false

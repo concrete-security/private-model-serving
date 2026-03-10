@@ -1,190 +1,105 @@
-# CVM Model Serving
+# Private Model Serving
 
-A generic, forkable repository demonstrating how a frontier AI lab can deploy an inference service (vLLM) inside a Confidential Virtual Machine (CVM), securely push model weights, and allow clients to verify CVM attestation + model integrity.
-
-Built from [Shade](https://github.com/concrete-security/shade) (TEE infrastructure) + [Umbra](https://github.com/concrete-security/umbra) (vLLM config) + a new Model Update Service.
+Confidential model serving built on [Shade](https://github.com/concrete-security/shade). A model owner pushes weights into a CVM, end users verify integrity via attestation and hash, then run inference.
 
 ## Architecture
 
 ```
-                    Model Owner                          Client
-                        |                                  |
-                  POST /push-model                   GET /tdx_quote
-                  (model URL)                        GET /model-hash
-                        |                            POST /v1/chat/completions
-                        v                                  |
-                ┌───────────────────────────────────────────┐
-                │              CVM (TEE)                    │
-                │                                           │
-                │  ┌─────────────────────┐                  │
-                │  │  nginx-cert-manager  │  (TLS + EKM)    │
-                │  │  :443               │                  │
-                │  └──┬──┬──┬──┬────────┘                  │
-                │     │  │  │  │                            │
-                │     │  │  │  └─► attestation-service      │
-                │     │  │  │      :8080                    │
-                │     │  │  │                               │
-                │     │  │  └────► model-service             │
-                │     │  │         :8001                    │
-                │     │  │         /push-model              │
-                │     │  │         /model-hash              │
-                │     │  │                                  │
-                │     │  └───────► vllm                     │
-                │     │            :8000                    │
-                │     │            /v1/chat/completions     │
-                │     │                                    │
-                │     └──── shared volume: model-store ────┘
-                │            /models/current
-                └───────────────────────────────────────────┘
+                Model Owner                          End User
+                    |                                    |
+              POST /push-model                     GET /tdx_quote
+              (tar archive + token)                GET /model-hash
+                    |                              POST /v1/chat/completions
+                    v                                    |
+            ┌────────────────────────────────────────────┐
+            │              CVM (TEE)                     │
+            │                                            │
+            │  nginx-cert-manager :443  (TLS + EKM)      │
+            │     ├── /tdx_quote    → attestation-service│
+            │     ├── /push-model   → model-service :8001│
+            │     ├── /model-hash   → model-service :8001│
+            │     └── /v1/*         → vllm :8000         │
+            │                                            │
+            │  shared volume: /models/current            │
+            └────────────────────────────────────────────┘
 ```
 
-## Execution Flow
+## Flow
 
-### Phase 1 - Boot
-CVM starts with nginx, attestation-service, model-service, and vLLM container. vLLM has no model to serve yet.
-
-### Phase 2 - Model Push
-Model owner POSTs `{"model_url": "https://huggingface.co/openai/gpt-oss-120b"}` to `/push-model`. Model-service downloads weights from HuggingFace into the shared volume. Endpoint is permanently disabled after first push. vLLM loads model from `/models/current`.
-
-### Phase 3 - Client Verification
-Client connects via HTTPS (RA-TLS in production). Gets TDX quote from `/tdx_quote`. Fetches model hash from `/model-hash`. Compares hash with expected value from model provider. If both checks pass, proceeds with inference via `/v1/chat/completions`.
+1. **Boot** — CVM starts all services. vLLM polls model-service `/ready`, waiting for model.
+2. **Push** — Model owner sends tar archive via `POST /push-model` with Bearer token. Model-service extracts to shared volume, computes SHA-256, verifies against expected hash. Endpoint is permanently disabled after first push (410 Gone). vLLM detects `/ready` and starts loading the model.
+3. **Verify** — End user gets TDX quote from `/tdx_quote`, fetches hash from `/model-hash`, compares with hash published by model owner.
+4. **Inference** — `POST /v1/chat/completions` (OpenAI-compatible).
 
 ## Quick Start
 
-### Development (with mock vLLM)
-
 ```bash
-cd cvm
-make dev-up       # Start all services with mock vLLM
-make test-all     # Run integration tests
-make dev-down     # Stop services
-```
+# Start services
+make docker-up
 
-### Full workflow
+# Push model (from model-owner/)
+cd model-owner && make push
 
-```bash
-cd cvm
-make dev-full     # Build, start, wait, test, stop
-```
-
-### Push a real model
-
-```bash
-# Start CVM services
-cd cvm && make dev-up
-
-# Push model weights (model-service downloads from HuggingFace)
-python examples/push_model.py \
-    --endpoint https://localhost \
-    --model-url https://huggingface.co/openai/gpt-oss-120b \
-    --dev
-
-# Wait for download + vLLM loading (~90 min for large models)
-# Then run full test suite
-make test-all
-
-# Client verification
-python client/verify.py --endpoint https://localhost --dev
+# Run user tests (from user/)
+cd user && uv run pytest test_user.py -v
 ```
 
 ## Repository Structure
 
 ```
-cvm-model-serving/
-├── README.md                              # This file
-├── CLAUDE.md                              # Dev guidance
-├── cvm/
-│   ├── docker-compose.yml                 # Production config
-│   ├── docker-compose.dev.override.yml    # Dev/test config with mocks
-│   ├── Makefile                           # Build/test commands
-│   ├── test_cvm.py                        # Integration test suite
-│   ├── requirements_test.txt              # Test dependencies
-│   │
-│   ├── cert-manager/                      # Nginx + TLS + EKM (from Shade)
-│   │   ├── Dockerfile
-│   │   ├── ngx_http_ekm_module/           # TLS EKM channel binding module
-│   │   ├── nginx_conf/                    # Nginx config templates
-│   │   └── src/cert_manager/              # Certificate management
-│   │
-│   ├── attestation-service/               # TDX attestation (from Shade)
-│   │   ├── Dockerfile
-│   │   ├── attestation_service.py
-│   │   └── tests/
-│   │
-│   ├── model-service/                     # Model push & hash (NEW)
-│   │   ├── Dockerfile
-│   │   ├── model_service.py               # FastAPI: /push-model, /model-hash
-│   │   ├── pyproject.toml
-│   │   └── tests/
-│   │
-│   └── vllm-patch/                        # vLLM patches (from Umbra)
-│       ├── Dockerfile
-│       └── harmony-streaming-tool-call-fallback.patch
-│
-├── client/
-│   └── verify.py                          # Client verification script
-│
-└── examples/
-    └── push_model.py                      # Example: push model to CVM
+private-model-serving/
+├── app/                        # Application: model-service (FastAPI)
+│   ├── app.py                  # /push-model, /model-hash, /health, /ready
+│   ├── utils.py                # Hash computation, sentinel
+│   ├── Dockerfile
+│   └── tests/
+├── services/                   # Shade infra (from fork)
+│   ├── cert-manager/           # nginx + TLS + EKM
+│   ├── attestation-service/    # TDX quotes
+│   └── auth-service/           # Token auth plugin
+├── src/shade/                  # Shade CLI
+├── docker-compose.yml          # App services (vLLM + model-service)
+├── docker-compose.mock.yml     # Shade mock app (framework testing only)
+├── shade.yml                   # Route config
+├── model-owner/                # Model owner tools (push, hash)
+├── user/                       # End user tools (verify, inference)
+├── test_cvm.py                 # Shade integration tests
+└── test_cvm_app.py             # App integration tests
 ```
 
 ## Components
 
-### model-service (NEW)
+### model-service
 FastAPI service managing model weights inside the CVM:
 
-- **`POST /push-model`** - Accepts `{"model_url": "...", "hf_token": "..."}`. Downloads model from HuggingFace into `/models/current`. One-time only: returns 403 after first push.
-- **`GET /model-hash`** - Returns deterministic SHA-256 hash of all model files. Computed inside the CVM, trustworthy via attestation.
-- **`GET /health`** - Health check with model status.
+- **`POST /push-model`** — Receives tar archive of model weights + Bearer token. Extracts to `/models/current`, computes SHA-256, compares with expected hash. One-time only (410 Gone on repeat).
+- **`GET /model-hash`** — Returns cached SHA-256 hash of model files.
+- **`GET /health`** — Health check with model status.
+- **`GET /ready`** — Returns 200 only after model is pushed. Used by vLLM to know when to start.
 
 ### cert-manager (from Shade)
-Nginx reverse proxy with TLS termination, Let's Encrypt certificate management, and TLS EKM channel binding (RFC 9266). Routes:
-- `/push-model`, `/model-hash` → model-service
-- `/v1/*` → vLLM
-- `/tdx_quote` → attestation-service
+Nginx reverse proxy with TLS termination, Let's Encrypt certificates, and TLS EKM channel binding (RFC 9266).
 
 ### attestation-service (from Shade)
-TDX attestation using dstack_sdk. Validates EKM headers with HMAC-SHA256 to prevent forgery.
+TDX attestation using dstack_sdk. Validates EKM headers with HMAC-SHA256.
 
-### vllm-patch (from Umbra)
-Custom vLLM Docker image with Harmony streaming tool call fallback patch.
+## Testing
 
-## Security Model
+```bash
+# App unit tests
+cd app && uv run pytest tests/ -v
 
-1. **CVM Isolation**: All services run inside a Confidential Virtual Machine (Intel TDX).
-2. **RA-TLS**: TLS termination inside the TEE with EKM channel binding.
-3. **Attestation**: Clients verify TDX quotes to confirm code integrity.
-4. **Model Integrity**: SHA-256 hash computed inside CVM; clients compare with known good hash.
-5. **One-time Push**: `/push-model` is permanently disabled after first use.
+# App integration tests (requires running containers + model pushed)
+uv run pytest test_cvm_app.py -v
 
-## Forking & Customization
-
-1. Fork this repository
-2. Replace `openai/gpt-oss-120b` with your model
-3. Update `docker-compose.yml` with your domain and vLLM config
-4. Deploy to a CVM-capable environment (e.g., Phala Cloud)
+# Shade unit tests
+uv run pytest tests/ -v
+```
 
 ## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `EKM_SHARED_SECRET` | HMAC key for EKM header validation | Required in prod |
-| `DOMAIN` | Domain for TLS certificate | `localhost` (dev) |
-| `DEV_MODE` | Enable development mode | `false` |
+| `PUSH_TOKEN` | Bearer token for /push-model | Empty (no auth) |
 | `MODEL_DIR` | Model storage path | `/models/current` |
-
-## Testing
-
-```bash
-# Run all tests
-cd cvm && make test-all
-
-# Individual tests
-make test-health
-make test-push-model
-make test-model-hash
-make test-attestation
-make test-vllm
-make test-certificate
-make test-client-verification
-```
+| `DOMAIN` | Domain for TLS certificate | `localhost` |

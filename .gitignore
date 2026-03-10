@@ -37,6 +37,7 @@ htmlcov/
 
 # Docker
 *.log
+docker-compose.shade.yml
 
 # Model weights
 model-owner/models/

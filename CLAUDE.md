@@ -2,10 +2,11 @@
 
 ## Project Overview
 
-Application-only repo for confidential model serving: vLLM + model-service.
-TEE infrastructure (nginx, TLS, attestation, EKM) comes from **Shade** via `shade build`.
+Private Model Serving — confidential model serving built on top of the **Shade** framework.
 
-Built from Shade (TEE framework) + Umbra (vLLM config) + new Model Service.
+Shade is a CVM (Confidential Virtual Machine) framework that wraps any containerized application with TEE infrastructure: TLS termination, TDX attestation, EKM channel binding, and secure reverse proxying.
+
+This repo is a Shade-based application that adds: vLLM inference + a model push/hash service (FastAPI).
 
 ## Three Actors
 
@@ -18,72 +19,77 @@ Built from Shade (TEE framework) + Umbra (vLLM config) + new Model Service.
 ## Repository Structure
 
 ```
-private-model-serving/
-├── Makefile                           # Root: full scenario (dev + prod modes)
-├── model-owner/                       # Model Owner tools
-│   ├── Makefile                       # download, archive, hash, push
-│   ├── compute_hash.py                # Compute SHA-256 locally
-│   └── verify.py                      # Verify attestation + hash after push
-├── user/                              # End-User tools
-│   └── verify.py                      # Compare hash + run inference
-├── cvm/                               # CVM deployment (application only)
-│   ├── docker-compose.dev.yml         # vLLM + model-service (no TEE infra)
-│   ├── shade.yml                      # Shade config → shade build generates prod compose
-│   ├── Makefile                       # Dev: up/down/wait
-│   ├── test_cvm.py                    # Application-level integration tests
-│   ├── model-service/                 # Model push + hash service (FastAPI)
-│   └── vllm-patch/                    # vLLM Dockerfile (from Umbra)
+private-model-serving/              # Shade framework + application
+├── src/shade/                      # Shade CLI: build/validate/init
+├── services/                       # Shade services (cert-manager, attestation, auth)
+├── tests/                          # Shade unit tests
+├── pyproject.toml                  # Shade package metadata
+├── uv.lock
+│
+├── app/                            # Application: model-service (FastAPI)
+│   ├── app.py                      # /push-model, /model-hash, /health, /ready
+│   ├── utils.py                    # SHA-256 hash computation
+│   ├── Dockerfile
+│   ├── pyproject.toml
+│   └── tests/
+│
+├── docker-compose.yml              # Application services (vLLM + model-service)
+├── shade.yml                       # Shade config (routes, domain, plugins)
+├── docker-compose.mock.yml         # Shade mock app (framework testing only)
+├── docker-compose.dev.override.yml # Shade dev overrides
+│
+├── model-owner/                    # Model Owner tools (hash, push, verify)
+├── user/                           # End-User tools (verify, inference)
+│
+├── Makefile                        # Shade infra + app scenario targets
+├── test_cvm.py                     # Shade framework integration tests
+├── test_cvm_app.py                 # Application integration tests
+└── CLAUDE.md
 ```
 
 ## Shade Integration
 
 ```bash
-# Dev mode (direct HTTP, no Shade):
-make scenario                          # uses MODEL_SERVICE + VLLM_ENDPOINT
+# Build: shade wraps app services with TLS + attestation
+uv run shade build
+
+# Dev mode (direct HTTP, no Shade nginx):
+make dev-up          # docker compose -f docker-compose.yml up
+make dev-down
 
 # Production mode (through Shade nginx):
-cd cvm && shade build                  # reads shade.yml + docker-compose.dev.yml
-ENDPOINT=https://model-serving.example.com make scenario
+make shade-build     # generates docker-compose.shade.yml
+docker compose -f docker-compose.shade.yml up -d
 ```
 
 Shade adds automatically: nginx (ports 80/443), attestation-service, TLS 1.3, EKM.
-Routes declared in `cvm/shade.yml`: `/push-model`, `/model-hash`, `/v1/` → services.
+Routes declared in `shade.yml`: `/push-model`, `/model-hash`, `/v1/` → services.
 
 ## Scenario Flow
 
 ```bash
-make scenario        # Full scenario with real model weights
-```
-
-Individual steps:
-```bash
-make step-1-generate-token   # Model Owner generates Bearer token → cvm/.env
-make step-2-hash-local       # Model Owner computes hash → publishes to users
-make step-3-push             # Model Owner pushes archive → CVM extracts + verifies hash
-make step-4-push-repeat      # Verify 410 Gone on second push
-make step-5-user-verify      # User compares hash + runs inference
+make step-1-hash-local   # Model Owner computes hash locally
+make step-2-push         # Model Owner pushes archive to CVM
+make step-3-push-repeat  # Verify 410 Gone on second push
+make step-4-user-verify  # User compares hash + runs inference
 ```
 
 ## Build & Development Commands
 
 ```bash
-cd cvm
-make dev-up          # Start vLLM + model-service
-make dev-down        # Stop services
-make wait-services   # Wait for readiness
-```
-
-Application-level tests:
-```bash
-python test_cvm.py --all               # All application tests
-python test_cvm.py --health            # Just health
-python test_cvm.py --wait              # Wait for services
-```
-
-Model service unit tests:
-```bash
-cd cvm/model-service
+# Shade unit tests
 uv run pytest tests/ -v
+make unit-tests
+
+# Shade integration tests (mock app through nginx)
+make dev-full        # Full workflow: up, wait, test, down
+make test-all        # All integration tests
+
+# Application unit tests
+cd app && uv run pytest tests/ -v
+
+# Application integration tests (requires running containers)
+uv run pytest test_cvm_app.py -v
 ```
 
 ## Code Style
@@ -91,25 +97,15 @@ uv run pytest tests/ -v
 - Python 3.11+, managed with `uv`
 - Ruff for linting/formatting (line-length=100, 4-space indent, double quotes)
 - Google docstring convention
+- Conventional Commits: `feat(app): ...`, `fix(shade): ...`
 
 ## Key Concepts
 
-- **Model push flow**: Model owner POSTs tar archive + Bearer token to `/push-model`. CVM extracts, computes hash, compares with expected hash. One-time only (410 Gone on repeat).
-- **Model hash**: Deterministic SHA-256 of all model files. Same algorithm on model-owner side (`compute_hash.py`) and CVM side (`model_service.py`).
-- **REPORTDATA**: `SHA512(nonce + EKM)` — session binding only (RFC 9266). Model hash is NOT included in REPORTDATA; it is communicated via HTTP response on `/model-hash`.
-- **Auth**: Bearer token (v1). Protects against unauthorized access. Does NOT protect against cloud operator reading env vars. mTLS planned for v2.
+- **shade.yml**: User config declaring app name, domain, routes, plugins
+- **Model push flow**: Model owner POSTs tar archive + Bearer token to `/push-model`. One-time only (410 Gone on repeat).
+- **Model hash**: Deterministic SHA-256 of all model files. Same algorithm on model-owner side and CVM side.
+- **REPORTDATA**: `SHA512(nonce + EKM)` — session binding only (RFC 9266). Model hash communicated via HTTP on `/model-hash`.
 - **Shared volume**: `model-store` volume shared between model-service and vLLM at `/models/current`.
-
-## Architecture
-
-With Shade (`shade build`):
-- nginx routes: `/push-model` + `/model-hash` → model-service:8001, `/v1/*` → vllm:8000
-- `/tdx_quote`, `/health` → handled by Shade automatically
-- Networks: `proxy` (nginx ↔ app services), `attestation` (internal)
-
-Without Shade (dev):
-- model-service exposed on port 8001, vLLM on port 8000
-- No TLS, no attestation
 
 ## Safety
 

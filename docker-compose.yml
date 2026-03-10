@@ -49,7 +49,7 @@ services:
   model-service:
     container_name: model-service
     build:
-      context: ./model-service
+      context: ./app
       dockerfile: Dockerfile
     volumes:
       - model-store:/models

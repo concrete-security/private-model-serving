@@ -1,0 +1,53 @@
+# HTTPS server (development mode with debug endpoints)
+server {
+    listen 443 ssl http2;
+    server_name ${DOMAIN};
+
+    # since using TLS EKM with Channel Binding, we require TLS 1.3
+    # https://datatracker.ietf.org/doc/html/rfc9266
+    ssl_protocols TLSv1.3;
+
+    # we want the attestation and following requests
+    # to be part of the same TCP connection. This doesn't
+    # enforce it, but it makes it possible.
+    keepalive_timeout 60;
+    keepalive_requests 100;
+
+    # SSL certificate (can be fullchain) and key
+    ssl_certificate /etc/nginx/ssl/cert.pem;
+    ssl_certificate_key /etc/nginx/ssl/key.pem;
+
+    # CORS origin matching
+${CORS_BLOCK}
+
+    # Health check endpoint
+    location = /health {
+        access_log off;
+        return 200 "healthy\n";
+        add_header Content-Type text/plain;
+    }
+
+${AUTH_LOCATION}
+
+    # Debug endpoint for EKM header testing (dev only)
+    location = /debug/ekm {
+        proxy_pass http://attestation-service:8080;
+        # Forward TLS EKM for session binding (RFC 9266)
+        proxy_set_header X-TLS-EKM-Channel-Binding $ekm_channel_binding;
+    }
+
+    # Remote attestation service
+    location = /tdx_quote {
+${CORS_HEADERS}
+
+        proxy_pass http://attestation-service:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Forward TLS EKM for session binding (RFC 9266)
+        proxy_set_header X-TLS-EKM-Channel-Binding $ekm_channel_binding;
+    }
+
+${EXTRA_LOCATIONS}
+}

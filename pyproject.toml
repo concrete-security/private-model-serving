@@ -1,0 +1,44 @@
+[project]
+name = "shade"
+version = "0.1.0"
+description = "Shade CVM Framework - TEE infrastructure for containerized apps"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+shade = "shade.cli:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/shade"]
+
+[tool.ruff]
+exclude = ["test_cvm.py"]
+line-length = 100
+indent-width = 4
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "pytest>=9.0.2",
+    "requests>=2.32",
+    "urllib3>=2.0",
+    "cryptography>=42.0",
+    "pytest-cov>=7.0.0",
+]
