@@ -99,10 +99,10 @@ app-dev-wait:
 
 
 app-dev-test:
-# @echo ""
-# @echo "═══ 🔥 Push model 🔥 ═══"
-# cd model-owner && make push
-# @echo ""
+	@echo ""
+	@echo "═══ 🔥 Push model 🔥 ═══"
+	cd model-owner && make Push
+	@echo ""
 	@clear
 	@echo "🔥 App dev tests (local HTTP, no TLS) 🔥"
 
@@ -110,12 +110,19 @@ app-dev-test:
 	$(MAKE) app-dev-wait
 	@echo ""
 	@echo "═══ 🔥 Model owner tests 🔥 ═══"
-	cd model-owner && make test
+	cd model-owner && PROXY_ENDPOINT=http://localhost:8001 uv run pytest test_model_owner.py -v
 	@echo ""
 	@echo "═══ 🔥 User tests 🔥 ═══"
-	cd user && uv run pytest test_user.py -v
+	cd user && PROXY_ENDPOINT=http://localhost:8001 VLLM_ENDPOINT=http://localhost:8000 uv run pytest test_user.py -v
 
 # ─── Dev (app + nginx + attestation, self-signed TLS) ────────
+# In dev mode there is only one endpoint https://localhost).
+# Nginx is the single entry point. It routes everything:
+#   - https://localhost/push-model → model-service:8001
+#   - https://localhost/model-hash → model-service:8001
+#   - https://localhost/v1/* → vllm:8000
+#   - https://localhost/tdx_quote → attestation:8080
+
 dev-up:
 	@echo "Starting full dev stack..."
 	docker compose -f $(COMPOSE_FILE) -f $(DEV_COMPOSE_FILE) up -d --build
@@ -124,10 +131,35 @@ dev-down:
 	docker compose -f $(COMPOSE_FILE) -f $(DEV_COMPOSE_FILE) down
 
 dev-logs:
+	clear
 	docker compose -f $(COMPOSE_FILE) -f $(DEV_COMPOSE_FILE) logs -f
 
 dev-clean:
 	docker compose -f $(COMPOSE_FILE) -f $(DEV_COMPOSE_FILE) down -v --remove-orphans
+
+dev-wait:
+	@echo "Waiting for vLLM to be ready..."
+	@until curl -skf https://localhost/health >/dev/null 2>&1; do \
+		printf "."; sleep 10; \
+	done
+	@echo ""
+	@echo "vLLM is ready!"
+
+dev-test:
+	@clear
+	@echo "🔒 Dev tests (HTTPS, self-signed TLS) 🔒"
+	@echo ""
+	@echo "═══ 🔒 Push model 🔒 ═══"
+	cd model-owner && make push ENDPOINT=https://localhost CURL="curl -sk"
+	@echo ""
+	@echo "═══ 🔒 Waiting for vLLM 🔒 ═══"
+	$(MAKE) dev-wait
+	@echo ""
+	@echo "═══ 🔒 Model owner tests 🔒 ═══"
+	cd model-owner && PROXY_ENDPOINT=https://localhost VERIFY_TLS=0 uv run pytest test_model_owner.py -v
+	@echo ""
+	@echo "═══ 🔒 User tests 🔒 ═══"
+	cd user && PROXY_ENDPOINT=https://localhost VERIFY_TLS=0 uv run pytest test_user.py -v
 
 # ─── Prod (shade build, real TLS) ────────────────────────────
 docker-up: shade-build
