@@ -113,6 +113,7 @@ app-dev-test:
 	cd model-owner && PROXY_ENDPOINT=http://localhost:8001 uv run pytest test_model_owner.py -v
 	@echo ""
 	@echo "═══ 🔥 User tests 🔥 ═══"
+	cp $(MODEL_HASH_FILE) user/model-hash.txt
 	cd user && PROXY_ENDPOINT=http://localhost:8001 VLLM_ENDPOINT=http://localhost:8000 uv run pytest test_user.py -v
 
 # ─── Dev (app + nginx + attestation, self-signed TLS) ────────
@@ -165,6 +166,7 @@ dev-test:
 	cd model-owner && PROXY_ENDPOINT=https://localhost VERIFY_TLS=0 uv run pytest test_model_owner.py -v
 	@echo ""
 	@echo "═══ 🔒 User tests 🔒 ═══"
+	cp $(MODEL_HASH_FILE) user/model-hash.txt
 	cd user && PROXY_ENDPOINT=https://localhost VERIFY_TLS=0 uv run pytest test_user.py -v
 
 # ─── Prod (shade build, real TLS) ────────────────────────────
