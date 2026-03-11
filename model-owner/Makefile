@@ -12,7 +12,13 @@ PUSH_TOKEN_FILE ?= push-token.txt
 MODEL_HASH_FILE ?= model-hash.txt
 CURL = curl -sk
 
-.PHONY:  download archive hash-local hash-remote push health test clean
+.PHONY:  generate-token download archive hash-local hash-remote push health test clean
+
+generate-token:
+	@TOKEN=$$(openssl rand -hex 32) && \
+	echo "$$TOKEN" > $(PUSH_TOKEN_FILE) && \
+	sed -i 's/^PUSH_TOKEN=.*/PUSH_TOKEN='"$$TOKEN"'/' ../.env && \
+	echo "Token saved to $(PUSH_TOKEN_FILE) and ../.env"
 
 download:
 	@clear
