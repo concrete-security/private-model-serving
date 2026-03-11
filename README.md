@@ -24,6 +24,62 @@ Confidential model serving built on [Shade](https://github.com/concrete-security
             └────────────────────────────────────────────┘
 ```
 
+## Shade Integration
+
+This project uses [Shade](https://github.com/concrete-security/shade) as a dependency, not a fork. Shade is a CVM framework that wraps any containerized application with TEE infrastructure (TLS termination, TDX attestation, EKM channel binding, secure reverse proxy).
+
+### Setup
+
+```bash
+# Install dependencies (includes Shade CLI)
+uv sync
+
+# Initialize Shade config (generates a template shade.yml)
+uv run shade init
+
+# Edit shade.yml to declare your routes, domain, and plugins
+```
+
+### shade.yml
+
+The `shade.yml` file declares how Shade wraps your application:
+
+```yaml
+app:
+  name: model-service
+
+services:
+  model-service:
+    networks: [proxy]
+  vllm:
+    networks: [proxy]
+
+cvm:
+  domain: model-serving.example.com
+  routes:
+    - path: /push-model
+      service: model-service
+      port: 8001
+    - path: /model-hash
+      service: model-service
+      port: 8001
+    - path: /v1/
+      service: vllm
+      port: 8000
+```
+
+### Build
+
+`shade build` reads `shade.yml` + `docker-compose.yml` and generates `docker-compose.shade.yml`, which adds nginx (TLS + reverse proxy) and attestation-service to your application services.
+
+```bash
+# Generate the production compose file
+uv run shade build
+
+# Start everything
+docker compose -f docker-compose.shade.yml up -d
+```
+
 ## Flow
 
 1. **Boot** — CVM starts all services. vLLM polls model-service `/ready`, waiting for model.
@@ -34,14 +90,14 @@ Confidential model serving built on [Shade](https://github.com/concrete-security
 ## Quick Start
 
 ```bash
-# Start services
+# Install dependencies
+uv sync
+
+# Dev mode (local HTTP, no TLS, no attestation)
+make app-dev-up
+
+# Production mode (TLS + attestation via Shade)
 make docker-up
-
-# Push model (from model-owner/)
-cd model-owner && make push
-
-# Run user tests (from user/)
-cd user && uv run pytest test_user.py -v
 ```
 
 ## Repository Structure
@@ -53,18 +109,12 @@ private-model-serving/
 │   ├── utils.py                # Hash computation, sentinel
 │   ├── Dockerfile
 │   └── tests/
-├── services/                   # Shade infra (from fork)
-│   ├── cert-manager/           # nginx + TLS + EKM
-│   ├── attestation-service/    # TDX quotes
-│   └── auth-service/           # Token auth plugin
-├── src/shade/                  # Shade CLI
 ├── docker-compose.yml          # App services (vLLM + model-service)
-├── docker-compose.mock.yml     # Shade mock app (framework testing only)
-├── shade.yml                   # Route config
+├── shade.yml                   # Shade config (routes, domain, plugins)
 ├── model-owner/                # Model owner tools (push, hash)
 ├── user/                       # End user tools (verify, inference)
-├── test_cvm.py                 # Shade integration tests
-└── test_cvm_app.py             # App integration tests
+├── test_cvm_app.py             # App integration tests
+└── pyproject.toml              # Dependencies (includes shade)
 ```
 
 ## Components
@@ -77,11 +127,9 @@ FastAPI service managing model weights inside the CVM:
 - **`GET /health`** — Health check with model status.
 - **`GET /ready`** — Returns 200 only after model is pushed. Used by vLLM to know when to start.
 
-### cert-manager (from Shade)
-Nginx reverse proxy with TLS termination, Let's Encrypt certificates, and TLS EKM channel binding (RFC 9266).
-
-### attestation-service (from Shade)
-TDX attestation using dstack_sdk. Validates EKM headers with HMAC-SHA256.
+### Shade services (added by `shade build`)
+- **nginx-cert-manager** — Reverse proxy with TLS 1.3 termination, Let's Encrypt, and EKM channel binding (RFC 9266).
+- **attestation-service** — TDX attestation via dstack_sdk.
 
 ## Testing
 
@@ -91,9 +139,6 @@ cd app && uv run pytest tests/ -v
 
 # App integration tests (requires running containers + model pushed)
 uv run pytest test_cvm_app.py -v
-
-# Shade unit tests
-uv run pytest tests/ -v
 ```
 
 ## Environment Variables
